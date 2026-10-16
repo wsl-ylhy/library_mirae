@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电子图书馆</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #f5f6f8;
+            color: #333;
+            padding: 24px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { font-size: 24px; margin-bottom: 16px; }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        select, button {
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:hover { background: #eef1f5; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08);
+        }
+        .card h2 { font-size: 16px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+        th { color: #888; font-weight: 500; }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+        .tag-ok { background: #e6f6ec; color: #1a7f37; }
+        .tag-empty { background: #fdeaea; color: #c0392b; }
+        .tag-active { background: #e8f0fe; color: #1a56db; }
+        .tag-returned { background: #f0f0f0; color: #666; }
+        #message { display: none; padding: 10px 14px; border-radius: 6px; font-size: 14px; margin-bottom: 16px; }
+        #message.error { display: block; background: #fdeaea; color: #c0392b; }
+        #message.success { display: block; background: #e6f6ec; color: #1a7f37; }
+        .link { color: #1a56db; cursor: pointer; }
+        .link:hover { text-decoration: underline; }
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,.35);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal {
+            background: #fff;
+            border-radius: 8px;
+            padding: 24px;
+            width: 380px;
+            box-shadow: 0 4px 16px rgba(0,0,0,.2);
+        }
+        .modal h2 { font-size: 18px; margin-bottom: 16px; }
+        .modal table td { padding: 6px 12px 6px 0; border: none; }
+        .modal table td:first-child { color: #888; width: 90px; }
+        .modal button { margin-top: 16px; width: 100%; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>电子图书馆</h1>
+
+    <div class="toolbar">
+        当前会员:
+        <select id="memberSelect">
+            <option value="1">张伟</option>
+            <option value="2">李娜</option>
+        </select>
+    </div>
+
+    <div id="message"></div>
+
+    <div class="card">
+        <h2>书籍列表</h2>
+        <table>
+            <thead>
+            <tr><th>ID</th><th>书名</th><th>作者</th><th>库存</th><th></th></tr>
+            </thead>
+            <tbody id="bookTable"></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>我的借阅</h2>
+        <table>
+            <thead>
+            <tr><th>书名</th><th>借出日期</th><th>应还日期</th><th>状态</th><th></th></tr>
+            </thead>
+            <tbody id="loanTable"></tbody>
+        </table>
+    </div>
+</div>
+
+<div id="detailModal" class="modal-backdrop">
+    <div class="modal">
+        <h2 id="detailTitle"></h2>
+        <table>
+            <tr><td>ISBN</td><td id="detailIsbn"></td></tr>
+            <tr><td>作者</td><td id="detailAuthor"></td></tr>
+            <tr><td>总册数</td><td id="detailTotal"></td></tr>
+            <tr><td>可借册数</td><td id="detailAvailable"></td></tr>
+        </table>
+        <button onclick="closeDetail()">关闭</button>
+    </div>
+</div>
+
+<script>
+    const memberSelect = document.getElementById('memberSelect');
+    const bookTable = document.getElementById('bookTable');
+    const loanTable = document.getElementById('loanTable');
+    const message = document.getElementById('message');
+    const detailModal = document.getElementById('detailModal');
+
+    function showMessage(text, isError) {
+        message.textContent = text;
+        message.className = isError ? 'error' : 'success';
+        setTimeout(() => { message.className = ''; }, 3000);
+    }
+
+    async function api(url, options) {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.message || ('HTTP ' + res.status));
+        }
+        return res.json();
+    }
+
+    async function loadBooks() {
+        const books = await api('/api/books');
+        bookTable.innerHTML = books.map(b => `
+            <tr>
+                <td>${b.id}</td>
+                <td><span class="link" onclick="showDetail(${b.id})">${b.title}</span></td>
+                <td>${b.author}</td>
+                <td>
+                    <span class="tag ${b.availableCopies > 0 ? 'tag-ok' : 'tag-empty'}">
+                        ${b.availableCopies > 0 ? '可借 ' + b.availableCopies + ' 本' : '已借完'}
+                    </span>
+                </td>
+                <td><button onclick="borrow(${b.id})" ${b.availableCopies === 0 ? 'disabled' : ''}>借阅</button></td>
+            </tr>`).join('');
+    }
+
+    async function loadLoans() {
+        const loans = await api('/api/members/' + memberSelect.value + '/loans');
+        loanTable.innerHTML = loans.length === 0
+            ? '<tr><td colspan="5" style="color:#999">暂无借阅</td></tr>'
+            : loans.map(l => `
+                <tr>
+                    <td>${l.bookTitle}</td>
+                    <td>${l.borrowedAt.slice(0, 10)}</td>
+                    <td>${l.dueDate}</td>
+                    <td><span class="tag tag-active">借阅中</span></td>
+                    <td><button onclick="returnLoan(${l.id})">归还</button></td>
+                </tr>`).join('');
+    }
+
+    async function refresh() {
+        try {
+            await Promise.all([loadBooks(), loadLoans()]);
+        } catch (e) {
+            showMessage(e.message, true);
+        }
+    }
+
+    async function borrow(bookId) {
+        try {
+            await api('/api/loans', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({bookId: bookId, memberId: Number(memberSelect.value)})
+            });
+            showMessage('借阅成功', false);
+            await refresh();
+        } catch (e) {
+            showMessage(e.message, true);
+        }
+    }
+
+    async function returnLoan(loanId) {
+        try {
+            await api('/api/loans/' + loanId + '/return', {method: 'POST'});
+            showMessage('归还成功', false);
+            await refresh();
+        } catch (e) {
+            showMessage(e.message, true);
+        }
+    }
+
+    async function showDetail(bookId) {
+        try {
+            const b = await api('/api/books/' + bookId);
+            document.getElementById('detailTitle').textContent = b.title;
+            document.getElementById('detailIsbn').textContent = b.isbn;
+            document.getElementById('detailAuthor').textContent = b.author;
+            document.getElementById('detailTotal').textContent = b.totalCopies;
+            document.getElementById('detailAvailable').textContent = b.availableCopies;
+            detailModal.style.display = 'flex';
+        } catch (e) {
+            showMessage(e.message, true);
+        }
+    }
+
+    function closeDetail() {
+        detailModal.style.display = 'none';
+    }
+
+    memberSelect.addEventListener('change', refresh);
+    refresh();
+</script>
+</body>
+</html>
